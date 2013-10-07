@@ -1,0 +1,10 @@
+{
+    "ignoreSslErrors": true,
+    "disk-cache": true,
+    "cookiesFile": "cookies.txt",
+
+    "diskCache": false,
+    "maxDiskCacheSize": 50,
+
+    "proxy": "localhost:3128"
+}
