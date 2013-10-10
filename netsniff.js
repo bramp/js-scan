@@ -1,5 +1,7 @@
 var fs = require('fs');
 
+var DEBUG = false;
+
 if (!Date.prototype.toISOString) {
     Date.prototype.toISOString = function () {
         function pad(n) { return n < 10 ? '0' + n : n; }
@@ -14,8 +16,7 @@ if (!Date.prototype.toISOString) {
     }
 }
 
-function createHAR(address, title, startTime, resources)
-{
+function createHAR(address, title, startTime, resources) {
     var entries = [];
 
     resources.forEach(function (resource) {
@@ -106,12 +107,12 @@ if (system.args.length === 1) {
     phantom.exit(1);
 } else {
 
-    var results = 'desktop/'
+    var type = 'desktop'
     var host = system.args[1];
     var ua = 'Mozilla/5.0 (Unknown; Linux x86_64) AppleWebKit/534.34 (KHTML, like Gecko) PhantomJS/1.6.0';
 
     if (system.args.length > 2 && system.args[2] == '--mobile') {
-        results = 'mobile/';
+        type = 'mobile';
         ua = 'Mozilla/5.0 (iPhone; U; CPU iPhone OS 3_0 like Mac OS X; en-us) AppleWebKit/528.18 (KHTML, like Gecko) Version/4.0 Mobile/7A341 Safari/528.16 PhantomJS/1.6.0'
     }
 
@@ -132,10 +133,17 @@ if (system.args.length === 1) {
     };
 
     page.onLoadStarted = function () {
-        page.startTime = new Date();
+        if (DEBUG) console.log('Load Start');
+
+        page.lastEvent = new Date();
+
+        // Sometimes this method gets called twice :()
+        if (!page.startTime)
+            page.startTime = page.lastEvent;
     };
 
     page.onResourceRequested = function (req) {
+        page.lastEvent = new Date();
         page.resources[req.id] = {
             request: req,
             startReply: null,
@@ -148,11 +156,14 @@ if (system.args.length === 1) {
     //};
 
     page.onResourceReceived = function (res) {
-        //console.log(JSON.stringify(res));
+        page.lastEvent = new Date();
+
         if (res.stage === 'start') {
+            if (DEBUG) console.log('Start ' + res.url);
             page.resources[res.id].startReply = res;
         }
         if (res.stage === 'end') {
+            if (DEBUG) console.log('End ' + res.url);
             page.resources[res.id].endReply = res;
         }
     };
@@ -160,21 +171,43 @@ if (system.args.length === 1) {
     page.open(page.address, function (status) {
         var har;
         if (status !== 'success') {
-            console.log('FAIL to load the address');
-            phantom.exit(1);
-        } else {
-            page.endTime = new Date();
-            page.title = page.evaluate(function () {
-                return document.title;
-            });
-            har = createHAR(page.address, page.title, page.startTime, page.resources);
-            console.log();
-
-            page.render(results + host + '.png');
-            fs.write(results + host + '.har', JSON.stringify(har, undefined, 4), 'w');
-            fs.write(results + host + '.html', page.content, 'w');
-
-            phantom.exit();
+            console.log('FAIL to load ' + page.address + " : " + status);
+            //phantom.exit(1);
         }
+        //} else {
+            // Page has finished loading
+            page.endTime = new Date();
+            if (DEBUG) console.log('Finished');
+
+            var interval = window.setInterval(function () {
+                var now = new Date();
+
+                // Wait 2 second after last event, or a total of 30 seconds
+                if ((now - page.startTime) > 30000 || (now - page.lastEvent) > 2000) {
+                    window.clearInterval(interval);
+
+                    page.title = page.evaluate(function () {
+                        // TODO consider doing more complex javascript detection
+                        return document.title;
+                    });
+
+                    var results_dir = type + "/" + host.substring(0, 3);
+
+                    try {
+                        fs.makeTree(results_dir);
+                    } catch (err) {} // Do nothing
+
+                    var results = results_dir + "/" + host
+
+                    har = createHAR(page.address, page.title, page.startTime, page.resources);
+                    page.render(results + '.png');
+                    fs.write(results + '.har', JSON.stringify(har, undefined, 4), 'w');
+                    fs.write(results + '.html', page.content, 'w');
+
+                    phantom.exit();
+                }
+
+            }, 500);
+        //}
     });
 }
